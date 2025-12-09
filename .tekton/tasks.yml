@@ -162,47 +162,54 @@ spec:
 ---
 
 # ---------------------------------
-# Buildah Local Task
+# Kaniko Task for OpenShift Restricted SCC
 # ---------------------------------
 apiVersion: tekton.dev/v1beta1
 kind: Task
 metadata:
-  name: buildah-local
+  name: kaniko-build-restricted
 spec:
   workspaces:
     - name: source
+    - name: docker-config
+      description: Workspace for Kaniko credentials
+      optional: true
   params:
     - name: IMAGE
       type: string
-      description: Image to produce
-    - name: BUILDER_IMAGE
-      type: string
-      description: Builder image
+      description: Full image name (e.g., image-registry.openshift-image-registry.svc:5000/namespace/app:tag)
     - name: DOCKERFILE
       type: string
       default: ./Dockerfile
-    - name: CONTEXT
-      type: string
-      default: .
-    - name: FORMAT
-      type: string
-      default: oci
+  stepTemplate:
+    securityContext:
+      runAsNonRoot: true
+      capabilities:
+        drop:
+          - ALL
+      seccompProfile:
+        type: RuntimeDefault
   steps:
     - name: build
-      image: $(params.BUILDER_IMAGE)
+      image: gcr.io/kaniko-project/executor:latest
       workingDir: $(workspaces.source.path)
-      securityContext:
-        capabilities:
-          drop:
-            - ALL
-        runAsNonRoot: true
-        seccompProfile:
-          type: RuntimeDefault
+      volumeMounts:
+        - name: docker-config
+          mountPath: /tekton/home
       script: |
-        #!/bin/sh
+        #!/busybox/sh
         set -eux
-        buildah --storage-driver vfs bud \
-        -f $(params.DOCKERFILE) \
-        -t $(params.IMAGE) \
-        --format=$(params.FORMAT) \
-        $(params.CONTEXT)
+
+        /kaniko/executor \
+          --dockerfile="$(params.DOCKERFILE)" \
+          --context="$(workspaces.source.path)" \
+          --destination="$(params.IMAGE)" \
+          --docker-config=/tekton/home/.docker \
+          --skip-tls-verify \
+          --insecure \
+          --verbosity=info
+  volumes:
+    - name: docker-config
+      emptyDir: {}
+
+
