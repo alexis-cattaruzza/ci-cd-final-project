@@ -162,54 +162,50 @@ spec:
 ---
 
 # ---------------------------------
-# Kaniko Task for OpenShift Restricted SCC
+# Buildah Local Task (fixed for Tekton)
 # ---------------------------------
 apiVersion: tekton.dev/v1beta1
 kind: Task
 metadata:
-  name: kaniko-build-restricted
+  name: buildah-local
 spec:
   workspaces:
     - name: source
-    - name: docker-config
-      description: Workspace for Kaniko credentials
-      optional: true
   params:
     - name: IMAGE
       type: string
-      description: Full image name (e.g., image-registry.openshift-image-registry.svc:5000/namespace/app:tag)
+      description: Image to produce
+    - name: BUILDER_IMAGE
+      type: string
+      description: Builder image
     - name: DOCKERFILE
       type: string
       default: ./Dockerfile
-  stepTemplate:
-    securityContext:
-      runAsNonRoot: true
-      capabilities:
-        drop:
-          - ALL
-      seccompProfile:
-        type: RuntimeDefault
+    - name: CONTEXT
+      type: string
+      default: .
+    - name: FORMAT
+      type: string
+      default: oci
   steps:
     - name: build
-      image: gcr.io/kaniko-project/executor:latest
+      image: $(params.BUILDER_IMAGE)
       workingDir: $(workspaces.source.path)
-      volumeMounts:
-        - name: docker-config
-          mountPath: /tekton/home
+      securityContext:
+        # Allow Buildah to run as root to avoid rootless UID/GID issues
+        runAsNonRoot: false
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
       script: |
-        #!/busybox/sh
+        #!/bin/sh
         set -eux
 
-        /kaniko/executor \
-          --dockerfile="$(params.DOCKERFILE)" \
-          --context="$(workspaces.source.path)" \
-          --destination="$(params.IMAGE)" \
-          --docker-config=/tekton/home/.docker \
-          --skip-tls-verify \
-          --insecure \
-          --verbosity=info
-  volumes:
-    - name: docker-config
-      emptyDir: {}
-
-
+        # Build the container image
+        buildah --storage-driver vfs bud \
+            -f "$(params.DOCKERFILE)" \
+            -t "$(params.IMAGE)" \
+            --format="$(params.FORMAT)" \
+            "$(params.CONTEXT)"
