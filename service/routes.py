@@ -48,7 +48,6 @@ def list_counters():
         for count in COUNTER.items()
     ]
 
-
     return jsonify(counters)
 
 
