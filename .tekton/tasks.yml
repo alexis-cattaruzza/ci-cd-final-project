@@ -201,4 +201,8 @@ spec:
       script: |
         #!/bin/sh
         set -eux
-        buildah --storage-driver vfs bud -f $(params.DOCKERFILE) -t $(params.IMAGE) $(params.CONTEXT) --format=$(params.FORMAT)
+        buildah --storage-driver vfs bud \
+        -f $(params.DOCKERFILE) \
+        -t $(params.IMAGE) \
+        --format=$(params.FORMAT) \
+        $(params.CONTEXT)
