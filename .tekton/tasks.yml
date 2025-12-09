@@ -144,8 +144,10 @@ spec:
       script: |
         #!/bin/sh
         set -eux
+        python -m pip install --upgrade pip wheel
         pip install -r $(params.requirements_file)
         flake8 $(params.path) $(params.args)
+
 
 ---
 
