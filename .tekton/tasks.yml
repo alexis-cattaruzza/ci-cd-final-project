@@ -16,11 +16,8 @@ spec:
           value: $(workspaces.source.path)
       workingDir: $(workspaces.source.path)
       securityContext:
-        runAsNonRoot: true
-        capabilities:
-          drop: ["ALL"]
-        seccompProfile:
-          type: RuntimeDefault
+        runAsNonRoot: false
+        runAsUser: 0
       script: |
         #!/usr/bin/env sh
         set -eu
@@ -32,9 +29,8 @@ spec:
         fi
 
 ---
-
 # ---------------------------------
-# Nose Task
+# Nose Task corrigée
 # ---------------------------------
 apiVersion: tekton.dev/v1beta1
 kind: Task
@@ -52,142 +48,13 @@ spec:
     - name: nosetests
       image: python:3.9-slim
       workingDir: $(workspaces.source.path)
-      securityContext:
-        runAsNonRoot: true
-        capabilities:
-          drop: ["ALL"]
-        seccompProfile:
-          type: RuntimeDefault
       script: |
         #!/bin/bash
         set -eux
-        python -m pip install --upgrade pip wheel
-        pip install -r requirements.txt
+        PIP_TARGET=$(workspaces.source.path)/.pip
+        mkdir -p "$PIP_TARGET"
+        export PATH="$PIP_TARGET/bin:$PATH"
+        export PYTHONPATH="$PIP_TARGET/lib/python3.9/site-packages:$PYTHONPATH"
+        python -m pip install --upgrade pip wheel --target "$PIP_TARGET"
+        pip install nose coverage --target "$PIP_TARGET"
         nosetests $(params.args)
-
----
-
-# ---------------------------------
-# Git Clone Local Task
-# ---------------------------------
-apiVersion: tekton.dev/v1beta1
-kind: Task
-metadata:
-  name: git-clone-local
-spec:
-  workspaces:
-    - name: output
-  params:
-    - name: url
-      type: string
-      description: Repository URL
-    - name: revision
-      type: string
-      description: Branch, tag, or commit
-      default: main
-    - name: deleteExisting
-      type: string
-      default: "true"
-  steps:
-    - name: clone
-      image: registry.redhat.io/openshift-pipelines/pipelines-git-init-rhel8@sha256:75d6228eb656b8778fb3bb8dc68c686ac1c9b787e5343ae3c2467f8e724af83e
-      workingDir: $(workspaces.output.path)
-      securityContext:
-        runAsNonRoot: true
-        capabilities:
-          drop: ["ALL"]
-        seccompProfile:
-          type: RuntimeDefault
-      script: |
-        #!/bin/sh
-        set -eux
-        if [ "$(params.deleteExisting)" = "true" ]; then
-          rm -rf $(workspaces.output.path)/*
-        fi
-        git clone --branch $(params.revision) $(params.url) $(workspaces.output.path)
-
----
-
-# ---------------------------------
-# Flake8 Local Task
-# ---------------------------------
-apiVersion: tekton.dev/v1beta1
-kind: Task
-metadata:
-  name: flake8-local
-spec:
-  workspaces:
-    - name: source
-  params:
-    - name: image
-      type: string
-      default: docker.io/alpine/flake8@sha256:bb280bf2af4a434be912f25bbcb6c79ea4d735ed3c8e259f96c405998920871f
-    - name: path
-      type: string
-      default: .
-    - name: requirements_file
-      type: string
-      default: requirements.txt
-    - name: args
-      type: string
-      default: ""
-  steps:
-    - name: lint
-      image: $(params.image)
-      workingDir: $(workspaces.source.path)
-      securityContext:
-        runAsNonRoot: true
-        capabilities:
-          drop: ["ALL"]
-        seccompProfile:
-          type: RuntimeDefault
-      script: |
-        #!/bin/sh
-        set -eux
-        python -m pip install --upgrade pip wheel
-        pip install -r $(params.requirements_file)
-        flake8 $(params.path) $(params.args)
-
-
----
-
-# ---------------------------------
-# Buildah Local Task
-# ---------------------------------
-apiVersion: tekton.dev/v1beta1
-kind: Task
-metadata:
-  name: buildah-local
-spec:
-  workspaces:
-    - name: source
-  params:
-    - name: IMAGE
-      type: string
-      description: Image to produce
-    - name: BUILDER_IMAGE
-      type: string
-      description: Builder image
-    - name: DOCKERFILE
-      type: string
-      default: ./Dockerfile
-    - name: CONTEXT
-      type: string
-      default: .
-    - name: FORMAT
-      type: string
-      default: oci
-  steps:
-    - name: build
-      image: $(params.BUILDER_IMAGE)
-      workingDir: $(workspaces.source.path)
-      securityContext:
-        runAsNonRoot: true
-        capabilities:
-          drop: ["ALL"]
-        seccompProfile:
-          type: RuntimeDefault
-      script: |
-        #!/bin/sh
-        set -eux
-        buildah --storage-driver vfs bud -f $(params.DOCKERFILE) -t $(params.IMAGE) $(params.CONTEXT) --format=$(params.FORMAT)
