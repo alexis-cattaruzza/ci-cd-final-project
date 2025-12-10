@@ -174,38 +174,94 @@ spec:
   params:
     - name: IMAGE
       type: string
-      description: Image to produce
-    - name: BUILDER_IMAGE
-      type: string
-      description: Builder image
     - name: DOCKERFILE
       type: string
       default: ./Dockerfile
     - name: CONTEXT
       type: string
       default: .
-    - name: FORMAT
-      type: string
-      default: oci
   steps:
     - name: build
-      image: $(params.BUILDER_IMAGE)
+      image: quay.io/buildah/stable:v1.33
       workingDir: $(workspaces.source.path)
       securityContext:
-        # Allow Buildah to run as root to avoid rootless UID/GID issues
-        runAsNonRoot: false
-        capabilities:
-          drop:
-            - ALL
-        seccompProfile:
-          type: RuntimeDefault
+        runAsUser: 1000
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
       script: |
         #!/bin/sh
         set -eux
 
-        # Build the container image
-        buildah --storage-driver vfs bud \
-            -f "$(params.DOCKERFILE)" \
-            -t "$(params.IMAGE)" \
-            --format="$(params.FORMAT)" \
-            "$(params.CONTEXT)"
+        echo "Fixing rootless buildah environment..."
+        export STORAGE_DRIVER=vfs
+        export BUILDAH_ISOLATION=chroot
+
+        # Build inside unshare to avoid privileged operations
+        buildah unshare buildah bud \
+          --storage-driver vfs \
+          -f "$(params.DOCKERFILE)" \
+          -t "$(params.IMAGE)" \
+          "$(params.CONTEXT)"
+
+---
+
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: openshift-deploy
+spec:
+  params:
+    - name: app-name
+      type: string
+    - name: build-image
+      type: string
+      description: "Image built previously to deploy"
+  steps:
+    - name: deploy
+      image: quay.io/openshift/origin-cli:4.12
+      script: |
+        #!/bin/sh
+        set -eux
+
+        echo "Deploying $(params.app-name) with image $(params.build-image)"
+
+        # Create or update the Deployment
+        oc create deployment $(params.app-name) \
+            --image=$(params.build-image) \
+            --dry-run=client -o yaml | oc apply -f -
+
+        # Ensure rollout occurs
+        oc rollout restart deployment/$(params.app-name)
+
+        # Wait until pod is ready
+        oc rollout status deployment/$(params.app-name) --timeout=60s
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: openshift-deploy
+spec:
+  params:
+    - name: app-name
+      type: string
+    - name: build-image
+      type: string
+      description: "Image built previously to deploy"
+  steps:
+    - name: deploy
+      image: quay.io/openshift/origin-cli:4.12
+      script: |
+        #!/bin/sh
+        set -eux
+
+        echo "Deploying $(params.app-name) with image $(params.build-image)"
+
+        # Create or update the Deployment
+        oc create deployment $(params.app-name) \
+            --image=$(params.build-image) \
+            --dry-run=client -o yaml | oc apply -f -
+
+        # Ensure rollout occurs
+        oc rollout restart deployment/$(params.app-name)
+
+        # Wait until pod is ready
+        oc rollout status deployment/$(params.app-name) --timeout=60s
